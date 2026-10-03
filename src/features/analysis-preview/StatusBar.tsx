@@ -4,9 +4,10 @@ interface StatusBarProps { mode: LayoutMode; analysis: Analysis; notice: Notice;
 
 export function StatusBar({ mode, analysis, notice, elementCount, lastSavedAt, onModeChange }: StatusBarProps) {
   const issues = analysis.overlaps.length + analysis.bounds.length + analysis.channels.length;
+  const hiddenNote = analysis.hiddenZoneCount > 0 ? `（含隐藏分区 ${analysis.hiddenIssueCount} 项）` : '';
   return <div className="bottom-bar">
     <div className="status-message"><span className={`status-dot ${notice.tone}`} />{notice.message}<small>{lastSavedAt ? `· 已保存 ${new Date(lastSavedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : ''}</small></div>
-    <div className="bottom-meta"><span>{elementCount} 个元素</span><span className={issues ? 'has-issues' : 'is-clear'}>{issues ? `${issues} 项待检查` : '布局状态良好'}</span><span>自动保存</span></div>
+    <div className="bottom-meta"><span>{elementCount} 个元素</span><span className={issues ? 'has-issues' : 'is-clear'} title={analysis.hiddenZoneCount > 0 ? '检查始终覆盖隐藏分区，隐藏不等于没问题' : undefined}>{issues ? `${issues} 项待检查${hiddenNote}` : `布局状态良好${analysis.hiddenZoneCount > 0 ? ' · 隐藏分区无问题' : ''}`}</span><span>自动保存</span></div>
     <div className="mode-tabs"><button type="button" className={mode === 'edit' ? 'active' : ''} onClick={() => onModeChange('edit')}>编辑</button><button type="button" className={mode === 'inspect' ? 'active' : ''} onClick={() => onModeChange('inspect')}>检查 {issues ? <b>{issues}</b> : null}</button><button type="button" className={mode === 'path' ? 'active' : ''} onClick={() => onModeChange('path')}>路径预览</button></div>
   </div>;
 }
