@@ -1,4 +1,4 @@
-import { createElement, createStarterDocument, analyzeLayout, findElement, getBoundingBox, normalizeRotation } from './domain';
+import { createElement, createStarterDocument, createZone, analyzeLayout, findElement, findZone, getVisibleElements, getBoundingBox, normalizeRotation } from './domain';
 import type { LayoutRepository } from './repository';
 import type { Analysis, ElementKind, LayoutDocument, LayoutMode, Notice, RenderElement, ViewPhase } from './types';
 
@@ -6,6 +6,7 @@ export interface ExpoSketchState {
   phase: ViewPhase;
   document: LayoutDocument;
   renderElements: RenderElement[];
+  visibleElements: RenderElement[];
   selectedId: string | null;
   selectedElement: RenderElement | null;
   mode: LayoutMode;
@@ -30,6 +31,7 @@ export class ExpoSketchViewModel {
     phase: 'loading',
     document: starter,
     renderElements: starterRenderElements,
+    visibleElements: starterRenderElements,
     selectedId: 'stage-1',
     selectedElement: starterRenderElements.find((element) => element.id === 'stage-1') ?? null,
     mode: 'edit',
@@ -74,7 +76,10 @@ export class ExpoSketchViewModel {
   }
 
   moveElement(id: string, x: number, y: number) {
-    const elements = this.stateValue.document.elements.map((element) => element.id === id ? { ...element, x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) } : element);
+    const element = findElement(this.stateValue.document, id);
+    const zone = findZone(this.stateValue.document, element?.zoneId);
+    if (zone?.locked) return;
+    const elements = this.stateValue.document.elements.map((item) => item.id === id ? { ...item, x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) } : item);
     this.commitAndPersist({ document: { ...this.stateValue.document, elements } });
   }
 
@@ -97,6 +102,53 @@ export class ExpoSketchViewModel {
     if (!id || !name.trim()) return;
     const elements = this.stateValue.document.elements.map((element) => element.id === id ? { ...element, name: name.trim() } : element);
     this.commitAndPersist({ document: { ...this.stateValue.document, elements } });
+  }
+
+  addZone() {
+    const zone = createZone(this.stateValue.document.zones.length);
+    const document = { ...this.stateValue.document, zones: [...this.stateValue.document.zones, zone] };
+    this.commitAndPersist({ document, notice: { tone: 'success', message: `${zone.name} 已创建，在属性面板可将元素归入该分区` } });
+  }
+
+  renameZone(id: string, name: string) {
+    if (!name.trim()) return;
+    const zones = this.stateValue.document.zones.map((zone) => zone.id === id ? { ...zone, name: name.trim() } : zone);
+    this.commitAndPersist({ document: { ...this.stateValue.document, zones } });
+  }
+
+  toggleZoneLocked(id: string) {
+    const zone = findZone(this.stateValue.document, id);
+    if (!zone) return;
+    const zones = this.stateValue.document.zones.map((item) => item.id === id ? { ...item, locked: !item.locked } : item);
+    this.commitAndPersist({ document: { ...this.stateValue.document, zones }, notice: { tone: 'info', message: zone.locked ? `${zone.name} 已解锁，元素可拖动` : `${zone.name} 已上锁，内部元素不可拖动` } });
+  }
+
+  toggleZoneHidden(id: string) {
+    const zone = findZone(this.stateValue.document, id);
+    if (!zone) return;
+    const zones = this.stateValue.document.zones.map((item) => item.id === id ? { ...item, hidden: !item.hidden } : item);
+    this.commitAndPersist({ document: { ...this.stateValue.document, zones }, notice: { tone: 'warning', message: zone.hidden ? `${zone.name} 已恢复显示，重新计入检查结论` : `${zone.name} 已隐藏：其元素不参与检查结论，问题不会被清除` } });
+  }
+
+  removeZone(id: string) {
+    const zone = findZone(this.stateValue.document, id);
+    if (!zone) return;
+    const zones = this.stateValue.document.zones.filter((item) => item.id !== id);
+    let released = 0;
+    const elements = this.stateValue.document.elements.map((element) => {
+      if (element.zoneId !== id) return element;
+      released += 1;
+      return { ...element, zoneId: null };
+    });
+    this.commitAndPersist({ document: { ...this.stateValue.document, zones, elements }, notice: { tone: 'info', message: `${zone.name} 已删除，${released} 个元素回到未分区，未被删除` } });
+  }
+
+  assignSelectedZone(zoneId: string | null) {
+    const id = this.stateValue.selectedId;
+    if (!id) return;
+    const zone = findZone(this.stateValue.document, zoneId);
+    const elements = this.stateValue.document.elements.map((element) => element.id === id ? { ...element, zoneId: zone?.id ?? null } : element);
+    this.commitAndPersist({ document: { ...this.stateValue.document, elements }, notice: { tone: 'success', message: zone ? `已归入 ${zone.name}` : '已移出分区，回到未分区' } });
   }
 
   resizeField(width: number, height: number) {
@@ -131,7 +183,9 @@ export class ExpoSketchViewModel {
   private commit(patch: Partial<ExpoSketchState>) {
     const next = { ...this.stateValue, ...patch };
     const renderElements = toRenderElements(next.document);
-    this.stateValue = { ...next, renderElements, selectedElement: renderElements.find((element) => element.id === next.selectedId) ?? null, analysis: analyzeLayout(next.document) };
+    const visibleIds = new Set(getVisibleElements(next.document).map((element) => element.id));
+    const visibleElements = renderElements.filter((element) => visibleIds.has(element.id));
+    this.stateValue = { ...next, renderElements, visibleElements, selectedElement: visibleElements.find((element) => element.id === next.selectedId) ?? null, analysis: analyzeLayout(next.document) };
     this.listeners.forEach((listener) => listener());
   }
 }

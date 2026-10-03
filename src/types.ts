@@ -2,6 +2,14 @@ export type ElementKind = 'booth' | 'stage' | 'seating' | 'entrance';
 export type LayoutMode = 'edit' | 'inspect' | 'path';
 export type ViewPhase = 'loading' | 'ready' | 'error';
 
+export interface Zone {
+  id: string;
+  name: string;
+  color: string;
+  locked: boolean;
+  hidden: boolean;
+}
+
 export interface ExpoElement {
   id: string;
   kind: ElementKind;
@@ -11,6 +19,7 @@ export interface ExpoElement {
   width: number;
   height: number;
   rotation: number;
+  zoneId: string | null;
 }
 
 export interface RenderElement extends ExpoElement {
@@ -28,6 +37,7 @@ export interface LayoutDocument {
   version: 1;
   title: string;
   field: FieldSize;
+  zones: Zone[];
   elements: ExpoElement[];
 }
 
@@ -65,11 +75,27 @@ export interface PathPreview {
   toName: string;
 }
 
+export interface ZoneSummary {
+  zoneId: string | null;
+  name: string;
+  color: string;
+  locked: boolean;
+  hidden: boolean;
+  elementCount: number;
+  overlaps: number;
+  bounds: number;
+  channels: number;
+}
+
 export interface Analysis {
   overlaps: OverlapIssue[];
   bounds: BoundsIssue[];
   channels: ChannelIssue[];
   path: PathPreview | null;
+  zoneSummaries: ZoneSummary[];
+  hiddenZoneCount: number;
+  hiddenElementCount: number;
+  excludedIssueCount: number;
 }
 
 export interface Notice {

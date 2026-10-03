@@ -9,9 +9,15 @@ import type {
   LayoutDocument,
   PathPreview,
   OverlapIssue,
+  Zone,
+  ZoneSummary,
 } from './types';
 
 export const MIN_CHANNEL = 1.2;
+
+export const ZONE_COLORS = ['#5b8def', '#ef795f', '#8f6fd8', '#3fa98a', '#e0a23f', '#d66f9e'];
+
+export const UNZONED_LABEL = '未分区';
 
 export const ELEMENT_SPECS: Record<ElementKind, ElementSpec> = {
   booth: { kind: 'booth', label: '标准展位', eyebrow: 'BOOTH', icon: '▦', color: '#e7f0ff', width: 5, height: 3.5 },
@@ -20,16 +26,28 @@ export const ELEMENT_SPECS: Record<ElementKind, ElementSpec> = {
   entrance: { kind: 'entrance', label: '入口', eyebrow: 'ENTRY', icon: '↗', color: '#fff2d8', width: 2.5, height: 1.5 },
 };
 
+export const createZone = (index: number): Zone => ({
+  id: `zone-${Date.now()}-${index}`,
+  name: `分区 ${index + 1}`,
+  color: ZONE_COLORS[index % ZONE_COLORS.length],
+  locked: false,
+  hidden: false,
+});
+
 export const createStarterDocument = (): LayoutDocument => ({
   version: 1,
   title: '春日创意市集 · A 区',
   field: { width: 28, height: 18 },
+  zones: [
+    { id: 'zone-booth', name: '展位区', color: ZONE_COLORS[0], locked: false, hidden: false },
+    { id: 'zone-event', name: '活动区', color: ZONE_COLORS[1], locked: false, hidden: false },
+  ],
   elements: [
-    { id: 'entry-1', kind: 'entrance', name: '主入口', x: 1, y: 8.25, width: 2.5, height: 1.5, rotation: 0 },
-    { id: 'stage-1', kind: 'stage', name: '分享舞台', x: 10, y: 1.5, width: 8, height: 4, rotation: 0 },
-    { id: 'booth-1', kind: 'booth', name: '香氛展位', x: 4, y: 2, width: 5, height: 3.5, rotation: 0 },
-    { id: 'booth-2', kind: 'booth', name: '手作展位', x: 19, y: 2, width: 5, height: 3.5, rotation: 0 },
-    { id: 'seating-1', kind: 'seating', name: '休息座席', x: 10, y: 11, width: 6, height: 3, rotation: 0 },
+    { id: 'entry-1', kind: 'entrance', name: '主入口', x: 1, y: 8.25, width: 2.5, height: 1.5, rotation: 0, zoneId: null },
+    { id: 'stage-1', kind: 'stage', name: '分享舞台', x: 10, y: 1.5, width: 8, height: 4, rotation: 0, zoneId: 'zone-event' },
+    { id: 'booth-1', kind: 'booth', name: '香氛展位', x: 4, y: 2, width: 5, height: 3.5, rotation: 0, zoneId: 'zone-booth' },
+    { id: 'booth-2', kind: 'booth', name: '手作展位', x: 19, y: 2, width: 5, height: 3.5, rotation: 0, zoneId: 'zone-booth' },
+    { id: 'seating-1', kind: 'seating', name: '休息座席', x: 10, y: 11, width: 6, height: 3, rotation: 0, zoneId: 'zone-event' },
   ],
 });
 
@@ -45,6 +63,7 @@ export const createElement = (kind: ElementKind, index: number, field: FieldSize
     width: spec.width,
     height: spec.height,
     rotation: 0,
+    zoneId: null,
   };
 };
 
@@ -114,12 +133,64 @@ export const createPathPreview = (elements: ExpoElement[]): PathPreview | null =
   return { points: [start, elbow, end], distance: Number((distance(start, elbow) + distance(elbow, end)).toFixed(1)), fromName: entrance.name, toName: target.name };
 };
 
-export const analyzeLayout = (document: LayoutDocument): Analysis => ({
-  overlaps: findOverlaps(document.elements),
-  bounds: findBoundsIssues(document.field, document.elements),
-  channels: findNarrowChannels(document.elements),
-  path: createPathPreview(document.elements),
-});
+export const findZone = (document: LayoutDocument, id: string | null | undefined): Zone | null =>
+  id ? document.zones.find((zone) => zone.id === id) ?? null : null;
+
+export const getVisibleElements = (document: LayoutDocument): ExpoElement[] => {
+  const hiddenZoneIds = new Set(document.zones.filter((zone) => zone.hidden).map((zone) => zone.id));
+  return document.elements.filter((element) => !element.zoneId || !hiddenZoneIds.has(element.zoneId));
+};
+
+const countIssueCount = (overlaps: OverlapIssue[], bounds: BoundsIssue[], channels: ChannelIssue[]) =>
+  overlaps.length + bounds.length + channels.length;
+
+export const summarizeByZone = (document: LayoutDocument): ZoneSummary[] => {
+  const overlaps = findOverlaps(document.elements);
+  const bounds = findBoundsIssues(document.field, document.elements);
+  const channels = findNarrowChannels(document.elements);
+  const knownZoneIds = new Set(document.zones.map((zone) => zone.id));
+  const summarize = (zoneId: string | null, name: string, color: string, locked: boolean, hidden: boolean, ids: Set<string>): ZoneSummary => ({
+    zoneId,
+    name,
+    color,
+    locked,
+    hidden,
+    elementCount: ids.size,
+    overlaps: overlaps.filter((issue) => ids.has(issue.firstId) || ids.has(issue.secondId)).length,
+    bounds: bounds.filter((issue) => ids.has(issue.elementId)).length,
+    channels: channels.filter((issue) => ids.has(issue.firstId) || ids.has(issue.secondId)).length,
+  });
+  const summaries = document.zones.map((zone) => summarize(
+    zone.id,
+    zone.name,
+    zone.color,
+    zone.locked,
+    zone.hidden,
+    new Set(document.elements.filter((element) => element.zoneId === zone.id).map((element) => element.id)),
+  ));
+  const unzonedIds = new Set(document.elements.filter((element) => !element.zoneId || !knownZoneIds.has(element.zoneId)).map((element) => element.id));
+  if (unzonedIds.size > 0) summaries.push(summarize(null, UNZONED_LABEL, '#9aa7b4', false, false, unzonedIds));
+  return summaries;
+};
+
+export const analyzeLayout = (document: LayoutDocument): Analysis => {
+  const visibleElements = getVisibleElements(document);
+  const overlaps = findOverlaps(visibleElements);
+  const bounds = findBoundsIssues(document.field, visibleElements);
+  const channels = findNarrowChannels(visibleElements);
+  const allIssueCount = countIssueCount(findOverlaps(document.elements), findBoundsIssues(document.field, document.elements), findNarrowChannels(document.elements));
+  const hiddenZones = document.zones.filter((zone) => zone.hidden);
+  return {
+    overlaps,
+    bounds,
+    channels,
+    path: createPathPreview(visibleElements),
+    zoneSummaries: summarizeByZone(document),
+    hiddenZoneCount: hiddenZones.length,
+    hiddenElementCount: document.elements.length - visibleElements.length,
+    excludedIssueCount: allIssueCount - countIssueCount(overlaps, bounds, channels),
+  };
+};
 
 export const findElement = (document: LayoutDocument, id: string | null) => document.elements.find((element) => element.id === id) ?? null;
 
